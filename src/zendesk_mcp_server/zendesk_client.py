@@ -3,6 +3,7 @@ import json
 import urllib.request
 import urllib.parse
 import base64
+import requests as _requests
 
 from zenpy import Zenpy
 from zenpy.lib.api_objects import Comment
@@ -53,20 +54,55 @@ class ZendeskClient:
 
     def get_ticket_comments(self, ticket_id: int) -> List[Dict[str, Any]]:
         """
-        Get all comments for a specific ticket.
+        Get all comments for a specific ticket, including attachment metadata.
         """
         try:
             comments = self.client.tickets.comments(ticket=ticket_id)
-            return [{
-                'id': comment.id,
-                'author_id': comment.author_id,
-                'body': comment.body,
-                'html_body': comment.html_body,
-                'public': comment.public,
-                'created_at': str(comment.created_at)
-            } for comment in comments]
+            result = []
+            for comment in comments:
+                attachments = []
+                for a in getattr(comment, 'attachments', []) or []:
+                    attachments.append({
+                        'id': a.id,
+                        'file_name': a.file_name,
+                        'content_url': a.content_url,
+                        'content_type': a.content_type,
+                        'size': a.size,
+                    })
+                result.append({
+                    'id': comment.id,
+                    'author_id': comment.author_id,
+                    'body': comment.body,
+                    'html_body': comment.html_body,
+                    'public': comment.public,
+                    'created_at': str(comment.created_at),
+                    'attachments': attachments,
+                })
+            return result
         except Exception as e:
             raise Exception(f"Failed to get comments for ticket {ticket_id}: {str(e)}")
+
+    def get_ticket_attachment(self, content_url: str) -> Dict[str, Any]:
+        """
+        Fetch an attachment by its content_url and return base64-encoded data.
+
+        Zendesk attachment URLs redirect to zdusercontent.com (Zendesk's CDN).
+        requests strips the Authorization header on cross-origin redirects,
+        which is required — the CDN returns 403 if it receives an auth header.
+        """
+        try:
+            # urllib was returning 403 forbidden
+            response = _requests.get(
+                content_url,
+                headers={'Authorization': self.auth_header},
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = base64.b64encode(response.content).decode('ascii')
+            content_type = response.headers.get('Content-Type', 'application/octet-stream').split(';')[0].strip()
+            return {'data': data, 'content_type': content_type}
+        except Exception as e:
+            raise Exception(f"Failed to fetch attachment from {content_url}: {str(e)}")
 
     def post_comment(self, ticket_id: int, comment: str, public: bool = True) -> str:
         """
