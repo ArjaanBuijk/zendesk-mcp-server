@@ -58,9 +58,13 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to get ticket {ticket_id}: {str(e)}")
 
-    def get_ticket_comments(self, ticket_id: int) -> List[Dict[str, Any]]:
+    _MAX_COMMENT_BODY_LENGTH = 2000
+
+    def get_ticket_comments(self, ticket_id: int) -> Dict[str, Any]:
         """
         Get all comments for a specific ticket, including attachment metadata.
+        Returns a dict with summary metadata and a list of comments.
+        Long comment bodies are truncated to reduce response size.
         """
         try:
             comments = self.client.tickets.comments(ticket=ticket_id)
@@ -75,16 +79,26 @@ class ZendeskClient:
                         'content_type': a.content_type,
                         'size': a.size,
                     })
+                body = comment.body or ''
+                truncated = len(body) > self._MAX_COMMENT_BODY_LENGTH
+                if truncated:
+                    body = body[:self._MAX_COMMENT_BODY_LENGTH] + '… [truncated]'
                 result.append({
                     'id': comment.id,
                     'author_id': comment.author_id,
-                    'body': comment.body,
-                    'html_body': comment.html_body,
+                    'body': body,
                     'public': comment.public,
                     'created_at': str(comment.created_at),
                     'attachments': attachments,
                 })
-            return result
+            dates = [c['created_at'] for c in result]
+            return {
+                'ticket_id': ticket_id,
+                'total_comments': len(result),
+                'first_comment_at': dates[0] if dates else None,
+                'last_comment_at': dates[-1] if dates else None,
+                'comments': result,
+            }
         except Exception as e:
             raise Exception(f"Failed to get comments for ticket {ticket_id}: {str(e)}")
 
