@@ -160,10 +160,14 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_tickets",
-            description="Fetch the latest tickets with pagination support",
+            description="Fetch tickets with optional status filter. Returns organization names. Use status to filter (e.g. status='open' for open tickets).",
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "Filter by status (new, open, pending, on-hold, solved, closed)"
+                    },
                     "page": {
                         "type": "integer",
                         "description": "Page number",
@@ -309,6 +313,7 @@ async def handle_call_tool(
             per_page = arguments.get("per_page", 25) if arguments else 25
             sort_by = arguments.get("sort_by", "created_at") if arguments else "created_at"
             sort_order = arguments.get("sort_order", "desc") if arguments else "desc"
+            status = arguments.get("status") if arguments else None
 
             tickets = await _run_sync(
                 zendesk_client.get_tickets,
@@ -316,6 +321,7 @@ async def handle_call_tool(
                 per_page=per_page,
                 sort_by=sort_by,
                 sort_order=sort_order,
+                status=status,
             )
             return [types.TextContent(
                 type="text",

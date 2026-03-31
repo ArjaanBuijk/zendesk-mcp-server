@@ -37,6 +37,11 @@ class ZendeskClient:
         """
         try:
             ticket = self.client.tickets(id=ticket_id)
+            org_id = ticket.organization_id
+            org_name = None
+            if org_id:
+                org_names = self._resolve_organization_names([org_id])
+                org_name = org_names.get(org_id)
             return {
                 'id': ticket.id,
                 'subject': ticket.subject,
@@ -47,7 +52,8 @@ class ZendeskClient:
                 'updated_at': str(ticket.updated_at),
                 'requester_id': ticket.requester_id,
                 'assignee_id': ticket.assignee_id,
-                'organization_id': ticket.organization_id
+                'organization_id': org_id,
+                'organization_name': org_name,
             }
         except Exception as e:
             raise Exception(f"Failed to get ticket {ticket_id}: {str(e)}")
@@ -173,57 +179,95 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to post comment on ticket {ticket_id}: {str(e)}")
 
-    def get_tickets(self, page: int = 1, per_page: int = 25, sort_by: str = 'created_at', sort_order: str = 'desc') -> Dict[str, Any]:
+    def _resolve_organization_names(self, org_ids: List[int]) -> Dict[int, str]:
+        """Resolve a list of organization IDs to names via Zenpy."""
+        org_names: Dict[int, str] = {}
+        for org_id in org_ids:
+            try:
+                org = self.client.organizations(id=org_id)
+                org_names[org_id] = org.name
+            except Exception:
+                org_names[org_id] = f"org-{org_id}"
+        return org_names
+
+    def get_tickets(
+        self,
+        page: int = 1,
+        per_page: int = 25,
+        sort_by: str = 'created_at',
+        sort_order: str = 'desc',
+        status: str | None = None,
+    ) -> Dict[str, Any]:
         """
-        Get the latest tickets with proper pagination support using direct API calls.
+        Get tickets with pagination, optional status filter, and organization names.
 
         Args:
             page: Page number (1-based)
             per_page: Number of tickets per page (max 100)
             sort_by: Field to sort by (created_at, updated_at, priority, status)
             sort_order: Sort order (asc or desc)
+            status: Optional status filter (new, open, pending, on-hold, solved, closed)
 
         Returns:
-            Dict containing tickets and pagination info
+            Dict containing tickets (with organization_name) and pagination info
         """
         try:
-            # Cap at reasonable limit
             per_page = min(per_page, 100)
 
-            # Build URL with parameters for offset pagination
-            params = {
-                'page': str(page),
-                'per_page': str(per_page),
-                'sort_by': sort_by,
-                'sort_order': sort_order
-            }
-            query_string = urllib.parse.urlencode(params)
-            url = f"{self.base_url}/tickets.json?{query_string}"
+            if status:
+                # Use Search API for server-side filtering
+                query = f"type:ticket status:{status}"
+                params = {
+                    'query': query,
+                    'page': str(page),
+                    'per_page': str(per_page),
+                    'sort_by': sort_by,
+                    'sort_order': sort_order,
+                }
+                query_string = urllib.parse.urlencode(params)
+                url = f"{self.base_url}/search.json?{query_string}"
+            else:
+                params = {
+                    'page': str(page),
+                    'per_page': str(per_page),
+                    'sort_by': sort_by,
+                    'sort_order': sort_order,
+                }
+                query_string = urllib.parse.urlencode(params)
+                url = f"{self.base_url}/tickets.json?{query_string}"
 
-            # Create request with auth header
             req = urllib.request.Request(url)
             req.add_header('Authorization', self.auth_header)
             req.add_header('Content-Type', 'application/json')
 
-            # Make the API request
             with urllib.request.urlopen(req) as response:
                 data = json.loads(response.read().decode())
 
-            tickets_data = data.get('tickets', [])
+            # Search API uses 'results', tickets API uses 'tickets'
+            tickets_data = data.get('results') or data.get('tickets', [])
 
-            # Process tickets to return only essential fields
+            # Collect unique org IDs and resolve names
+            org_ids = {
+                t.get('organization_id')
+                for t in tickets_data
+                if t.get('organization_id')
+            }
+            org_names = self._resolve_organization_names(list(org_ids)) if org_ids else {}
+
             ticket_list = []
             for ticket in tickets_data:
+                org_id = ticket.get('organization_id')
                 ticket_list.append({
                     'id': ticket.get('id'),
                     'subject': ticket.get('subject'),
                     'status': ticket.get('status'),
                     'priority': ticket.get('priority'),
-                    'description': ticket.get('description'),
                     'created_at': ticket.get('created_at'),
                     'updated_at': ticket.get('updated_at'),
                     'requester_id': ticket.get('requester_id'),
-                    'assignee_id': ticket.get('assignee_id')
+                    'assignee_id': ticket.get('assignee_id'),
+                    'organization_id': org_id,
+                    'organization_name': org_names.get(org_id) if org_id else None,
                 })
 
             return {
@@ -233,15 +277,16 @@ class ZendeskClient:
                 'count': len(ticket_list),
                 'sort_by': sort_by,
                 'sort_order': sort_order,
+                'status_filter': status,
                 'has_more': data.get('next_page') is not None,
                 'next_page': page + 1 if data.get('next_page') else None,
-                'previous_page': page - 1 if data.get('previous_page') and page > 1 else None
+                'previous_page': page - 1 if data.get('previous_page') and page > 1 else None,
             }
         except urllib.error.HTTPError as e:
             error_body = e.read().decode() if e.fp else "No response body"
-            raise Exception(f"Failed to get latest tickets: HTTP {e.code} - {e.reason}. {error_body}")
+            raise Exception(f"Failed to get tickets: HTTP {e.code} - {e.reason}. {error_body}")
         except Exception as e:
-            raise Exception(f"Failed to get latest tickets: {str(e)}")
+            raise Exception(f"Failed to get tickets: {str(e)}")
 
     def get_all_articles(self) -> Dict[str, Any]:
         """
