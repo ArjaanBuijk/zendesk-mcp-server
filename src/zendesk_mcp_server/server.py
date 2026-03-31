@@ -372,7 +372,7 @@ async def handle_call_tool(
             else:
                 return [types.TextContent(
                     type="text",
-                    text=json.dumps({"content_type": content_type, "data_base64": result["data"]})
+                    text=result["data"]
                 )]
 
         elif name == "update_ticket":

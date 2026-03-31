@@ -102,10 +102,16 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to get comments for ticket {ticket_id}: {str(e)}")
 
-    # Allowed image MIME types. SVG is excluded — it can contain active XML/JS content.
+    # Allowed MIME types for attachments.
     _ALLOWED_IMAGE_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+    _ALLOWED_TEXT_TYPES = {
+        'text/plain', 'text/csv', 'text/html', 'text/xml',
+        'application/json', 'application/xml',
+        'application/x-yaml', 'text/yaml',
+    }
+    _ALLOWED_TYPES = _ALLOWED_IMAGE_TYPES | _ALLOWED_TEXT_TYPES
 
-    # Magic bytes (file signatures) for each allowed type.
+    # Magic bytes (file signatures) for image types.
     _MAGIC_BYTES: Dict[str, List[bytes]] = {
         'image/jpeg': [b'\xff\xd8\xff'],
         'image/png':  [b'\x89PNG\r\n\x1a\n'],
@@ -118,12 +124,15 @@ class ZendeskClient:
 
     def get_ticket_attachment(self, content_url: str) -> Dict[str, Any]:
         """
-        Fetch an image attachment and return base64-encoded data.
+        Fetch an attachment and return its content.
+
+        Images are returned as base64-encoded data.
+        Text files are returned as plain text (UTF-8 decoded).
 
         Security measures applied:
-        - Allowlist of safe image MIME types (no SVG or arbitrary binary).
-        - Magic byte validation so the file header must match the declared type.
-        - 10 MB size cap to prevent image bombs and excessive token usage.
+        - Allowlist of safe MIME types (no SVG or arbitrary binary).
+        - Magic byte validation for image types.
+        - 10 MB size cap.
 
         Zendesk attachment URLs redirect to zdusercontent.com (Zendesk's CDN).
         requests strips the Authorization header on cross-origin redirects,
@@ -140,10 +149,10 @@ class ZendeskClient:
 
             content_type = response.headers.get('Content-Type', '').split(';')[0].strip().lower()
 
-            if content_type not in self._ALLOWED_IMAGE_TYPES:
+            if content_type not in self._ALLOWED_TYPES:
                 raise ValueError(
                     f"Attachment type '{content_type}' is not allowed. "
-                    f"Supported types: {sorted(self._ALLOWED_IMAGE_TYPES)}"
+                    f"Supported types: {sorted(self._ALLOWED_TYPES)}"
                 )
 
             # Read with size cap — stops download as soon as limit is exceeded.
@@ -158,7 +167,14 @@ class ZendeskClient:
                 chunks.append(chunk)
             content = b''.join(chunks)
 
-            # Validate magic bytes to catch MIME type spoofing.
+            # For text types, decode and return as plain text.
+            if content_type in self._ALLOWED_TEXT_TYPES:
+                return {
+                    'data': content.decode('utf-8', errors='replace'),
+                    'content_type': content_type,
+                }
+
+            # Validate magic bytes for images to catch MIME type spoofing.
             magic_signatures = self._MAGIC_BYTES.get(content_type, [])
             if magic_signatures and not any(content.startswith(sig) for sig in magic_signatures):
                 raise ValueError(
