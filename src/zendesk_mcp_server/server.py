@@ -160,13 +160,21 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_tickets",
-            description="Fetch tickets with optional status filter. Returns organization names. Use status to filter (e.g. status='open' for open tickets).",
+            description="Fetch tickets with optional filters. Returns organization names. Filter by status, organization, and/or date.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "status": {
                         "type": "string",
                         "description": "Filter by status (new, open, pending, on-hold, solved, closed)"
+                    },
+                    "organization": {
+                        "type": "string",
+                        "description": "Filter by organization/company name"
+                    },
+                    "created_after": {
+                        "type": "string",
+                        "description": "Only return tickets created after this date (YYYY-MM-DD format)"
                     },
                     "page": {
                         "type": "integer",
@@ -314,6 +322,8 @@ async def handle_call_tool(
             sort_by = arguments.get("sort_by", "created_at") if arguments else "created_at"
             sort_order = arguments.get("sort_order", "desc") if arguments else "desc"
             status = arguments.get("status") if arguments else None
+            organization = arguments.get("organization") if arguments else None
+            created_after = arguments.get("created_after") if arguments else None
 
             tickets = await _run_sync(
                 zendesk_client.get_tickets,
@@ -322,6 +332,8 @@ async def handle_call_tool(
                 sort_by=sort_by,
                 sort_order=sort_order,
                 status=status,
+                organization=organization,
+                created_after=created_after,
             )
             return [types.TextContent(
                 type="text",

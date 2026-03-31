@@ -255,9 +255,11 @@ class ZendeskClient:
         sort_by: str = 'created_at',
         sort_order: str = 'desc',
         status: str | None = None,
+        organization: str | None = None,
+        created_after: str | None = None,
     ) -> Dict[str, Any]:
         """
-        Get tickets with pagination, optional status filter, and organization names.
+        Get tickets with pagination, optional filters, and organization names.
 
         Args:
             page: Page number (1-based)
@@ -265,6 +267,8 @@ class ZendeskClient:
             sort_by: Field to sort by (created_at, updated_at, priority, status)
             sort_order: Sort order (asc or desc)
             status: Optional status filter (new, open, pending, on-hold, solved, closed)
+            organization: Optional organization/company name filter
+            created_after: Optional date filter (YYYY-MM-DD), returns tickets created after this date
 
         Returns:
             Dict containing tickets (with organization_name) and pagination info
@@ -272,9 +276,16 @@ class ZendeskClient:
         try:
             per_page = min(per_page, 100)
 
-            if status:
+            if status or organization or created_after:
                 # Use Search API for server-side filtering
-                query = f"type:ticket status:{status}"
+                query_parts = ["type:ticket"]
+                if status:
+                    query_parts.append(f"status:{status}")
+                if organization:
+                    query_parts.append(f'organization:"{organization}"')
+                if created_after:
+                    query_parts.append(f"created>{created_after}")
+                query = " ".join(query_parts)
                 params = {
                     'query': query,
                     'page': str(page),
