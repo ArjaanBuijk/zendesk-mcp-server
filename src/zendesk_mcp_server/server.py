@@ -363,7 +363,12 @@ async def handle_call_tool(
                 arguments["content_url"],
             )
             content_type = result["content_type"]
-            if content_type.startswith("image/"):
+            if result.get("saved_to_disk"):
+                return [types.TextContent(
+                    type="text",
+                    text=f"File saved to: {result['data']} ({content_type})"
+                )]
+            elif content_type.startswith("image/"):
                 return [types.ImageContent(
                     type="image",
                     data=result["data"],

@@ -1,5 +1,7 @@
 from typing import Dict, Any, List
 import json
+import os
+import tempfile
 import urllib.request
 import urllib.parse
 import base64
@@ -109,7 +111,13 @@ class ZendeskClient:
         'application/json', 'application/xml',
         'application/x-yaml', 'text/yaml',
     }
-    _ALLOWED_TYPES = _ALLOWED_IMAGE_TYPES | _ALLOWED_TEXT_TYPES
+    _ALLOWED_BINARY_TYPES = {
+        'application/zip', 'application/gzip', 'application/x-gzip',
+        'application/x-tar', 'application/x-compressed-tar',
+        'application/pdf',
+        'application/octet-stream',
+    }
+    _ALLOWED_TYPES = _ALLOWED_IMAGE_TYPES | _ALLOWED_TEXT_TYPES | _ALLOWED_BINARY_TYPES
 
     # Magic bytes (file signatures) for image types.
     _MAGIC_BYTES: Dict[str, List[bytes]] = {
@@ -172,6 +180,26 @@ class ZendeskClient:
                 return {
                     'data': content.decode('utf-8', errors='replace'),
                     'content_type': content_type,
+                }
+
+            # For binary types, save to temp file and return the path.
+            if content_type in self._ALLOWED_BINARY_TYPES:
+                # Extract filename from URL query param or use a default.
+                filename = 'attachment'
+                if 'name=' in content_url:
+                    from urllib.parse import urlparse, parse_qs
+                    qs = parse_qs(urlparse(content_url).query)
+                    if 'name' in qs:
+                        filename = qs['name'][0]
+                tmpdir = os.path.join(tempfile.gettempdir(), 'zendesk-attachments')
+                os.makedirs(tmpdir, exist_ok=True)
+                filepath = os.path.join(tmpdir, filename)
+                with open(filepath, 'wb') as f:
+                    f.write(content)
+                return {
+                    'data': filepath,
+                    'content_type': content_type,
+                    'saved_to_disk': True,
                 }
 
             # Validate magic bytes for images to catch MIME type spoofing.
